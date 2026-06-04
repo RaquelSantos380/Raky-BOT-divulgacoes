@@ -1,0 +1,117 @@
+import { PREFIX } from "../../config.js";
+
+export default {
+    name: "divulgar",
+    description: "Sistema completo de divulgação em grupos",
+    commands: ["divulgar", "d"],
+    usage: `${PREFIX}divulgar [subcomando] [parâmetros]`,
+
+    handle: async ({ sendReply, db, fullArgs, socket, remoteJid, mentionedJid }) => {
+        const args = fullArgs.trim().toLowerCase();
+        
+        if (!args || args === "ajuda") {
+            const msg = `
+📢 *SISTEMA DE DIVULGAÇÃO*
+
+┌─── 💬 ENVIO ───────────────┐
+│ ${PREFIX}divulgar enviar | ID | msg
+│ ${PREFIX}divulgar imagem | ID | legenda
+│ ${PREFIX}divulgar todos | msg
+├─── ⏰ AGENDAR ──────────────┤
+│ ${PREFIX}divulgar agendar | min | ID | msg
+│ ${PREFIX}divulgar agendar-diario | horario | ID | msg
+│ ${PREFIX}divulgar cancelar | ID
+├─── 📝 TEMPLATES ────────────┤
+│ ${PREFIX}divulgar salvar | nome | msg
+│ ${PREFIX}divulgar usar | nome | ID
+│ ${PREFIX}divulgar templates
+├─── 🚫 BLACKLIST ────────────┤
+│ ${PREFIX}divulgar blacklist add | @user
+│ ${PREFIX}divulgar blacklist remove | @user
+│ ${PREFIX}divulgar blacklist list
+├─── 📊 ESTATÍSTICAS ─────────┤
+│ ${PREFIX}divulgar stats
+│ ${PREFIX}divulgar limite | número
+└─────────────────────────────┘
+`;
+            await sendReply(msg);
+            return;
+        }
+        
+        // ESTATÍSTICAS
+        if (args === "stats" || args === "estatisticas") {
+            const stats = db.get("divulgar_stats") || { total: 0, hoje: 0 };
+            const hoje = new Date().toLocaleDateString();
+            if (db.get("ultima_data") !== hoje) {
+                stats.hoje = 0;
+                db.set("ultima_data", hoje);
+            }
+            await sendReply(`📊 *ESTATÍSTICAS*\n📨 Total: ${stats.total}\n📅 Hoje: ${stats.hoje}`);
+            return;
+        }
+        
+        // LIMITE DIÁRIO
+        if (args.startsWith("limite")) {
+            const limite = parseInt(args.split("|")[1]?.trim());
+            if (limite) {
+                db.set("divulgar_limite", limite);
+                await sendReply(`✅ Limite diário: ${limite} mensagens`);
+            } else {
+                const limiteAtual = db.get("divulgar_limite") || 0;
+                await sendReply(`📊 Limite atual: ${limiteAtual === 0 ? "Ilimitado" : limiteAtual}`);
+            }
+            return;
+        }
+        
+        // TEMPLATES
+        if (args.startsWith("salvar")) {
+            const parts = args.replace("salvar", "").split("|");
+            if (parts.length < 2) return sendReply(`⚠️ Use: ${PREFIX}divulgar salvar | nome | mensagem`);
+            const nome = parts[0].trim();
+            const msg = parts.slice(1).join("|").trim();
+            const templates = db.get("divulgar_templates") || {};
+            templates[nome] = msg;
+            db.set("divulgar_templates", templates);
+            await sendReply(`✅ Template *${nome}* salvo!`);
+            return;
+        }
+        
+        if (args.startsWith("usar")) {
+            const parts = args.replace("usar", "").split("|");
+            if (parts.length < 2) return sendReply(`⚠️ Use: ${PREFIX}divulgar usar | nome | ID`);
+            const nome = parts[0].trim();
+            const grupoId = parts[1].trim();
+            const templates = db.get("divulgar_templates") || {};
+            const msg = templates[nome];
+            if (!msg) return sendReply(`❌ Template *${nome}* não encontrado`);
+            await socket.sendMessage(grupoId, { text: msg });
+            await sendReply(`✅ Template *${nome}* enviado!`);
+            return;
+        }
+        
+        if (args === "templates") {
+            const templates = db.get("divulgar_templates") || {};
+            const nomes = Object.keys(templates);
+            if (nomes.length === 0) return sendReply("📭 Nenhum template salvo");
+            let msg = "📋 *TEMPLATES SALVOS*\n\n";
+            nomes.forEach((nome, i) => msg += `${i+1}. ${nome}\n`);
+            await sendReply(msg);
+            return;
+        }
+        
+        // ENVIO SIMPLES
+        if (args.startsWith("enviar")) {
+            const parts = args.replace("enviar", "").split("|");
+            if (parts.length < 2) return sendReply(`⚠️ Use: ${PREFIX}divulgar enviar | ID | mensagem`);
+            const grupoId = parts[0].trim();
+            const msg = parts.slice(1).join("|").trim();
+            await socket.sendMessage(grupoId, { text: msg });
+            await sendReply(`✅ Mensagem enviada para ${grupoId}`);
+            
+            const stats = db.get("divulgar_stats") || { total: 0, hoje: 0 };
+            stats.total++;
+            stats.hoje++;
+            db.set("divulgar_stats", stats);
+            return;
+        }
+        

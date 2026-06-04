@@ -1,10 +1,12 @@
+import dotenv from 'dotenv';
+dotenv.config();
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-export const PREFIX = "/";
+export const PREFIX = "?";
 export const BOT_EMOJI = "🤖";
 export const BOT_NAME = "Raky BOT";
 export const BOT_LID = "67504588206107@lid";
@@ -26,3 +28,4 @@ export const PROXY_PORT = "";
 export const PROXY_USERNAME = "";
 export const PROXY_PASSWORD = "";
 export const OPENAI_API_KEY = "AIzaSyAFqHanwwn7naYviyRu8Tuv7Y5drqT_unI";
+export const GEMINI_API_KEY = process.env.GEMINI_API_KEY;

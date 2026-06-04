@@ -20,6 +20,7 @@
     "axios": "^1.14.0",
     "baileys": "7.0.0-rc10",
     "correios-brasil": "^3.0.6",
+    "dotenv": "^17.4.2",
     "node-cache": "^5.1.2",
     "node-webpmux": "^3.2.1",
     "openai": "^6.33.0",
