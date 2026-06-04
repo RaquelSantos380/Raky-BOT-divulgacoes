@@ -25,8 +25,9 @@ process.on("unhandledRejection", (reason) => {
     errorLog(`Promessa rejeitada não tratada:`, reason);
 });
 
+// Sistema de auto-respostas (SOMENTE NO PRIVADO)
 async function setupAutoReplyListener(socket) {
-    infoLog("📝 Sistema de auto-respostas ativado!");
+    infoLog("📝 Sistema de auto-respostas ativado (apenas no privado)!");
     
     socket.ev.on("messages.upsert", async ({ messages }) => {
         try {
@@ -35,7 +36,6 @@ async function setupAutoReplyListener(socket) {
             if (msg.key.remoteJid?.includes("@status")) return;
             
             const isGroup = msg.key.remoteJid?.includes("@g.us");
-            const isPrivate = !isGroup;
             const from = msg.key.remoteJid;
             
             const messageText = msg.message.conversation || 
@@ -46,14 +46,15 @@ async function setupAutoReplyListener(socket) {
             if (!messageText) return;
             if (messageText.startsWith("?")) return;
             
-            if (isPrivate) {
+            // SÓ RESPONDE NO PRIVADO! Ignora grupos completamente
+            if (!isGroup) {
                 const lowerText = messageText.toLowerCase();
                 const autoReplies = global.autoReplies || {};
                 
                 for (const [palavra, resposta] of Object.entries(autoReplies)) {
                     if (lowerText.includes(palavra.toLowerCase())) {
                         await socket.sendMessage(from, { text: resposta });
-                        infoLog(`🤖 Auto-resposta: "${palavra}" -> ${from}`);
+                        infoLog(`🤖 Auto-resposta (privado): "${palavra}" -> ${from}`);
                         break;
                     }
                 }
@@ -110,3 +111,16 @@ http.createServer((req, res) => {
 }).listen(PORT, () => {
     console.log(`[RENDER] Servidor HTTP rodando na porta ${PORT}`);
 });
+
+// AUTO-PING
+const AUTOPING_URL = process.env.RENDER_EXTERNAL_URL || "https://raky-bot-divulgacoes.onrender.com";
+async function autoPing() {
+    try {
+        const response = await fetch(AUTOPING_URL);
+        console.log(`[AUTO-PING] ✅ Bot ativo - Status: ${response.status}`);
+    } catch (error) {
+        console.log(`[AUTO-PING] ⚠️ Erro: ${error.message}`);
+    }
+}
+setInterval(autoPing, 5 * 60 * 1000);
+setTimeout(autoPing, 60 * 1000);
