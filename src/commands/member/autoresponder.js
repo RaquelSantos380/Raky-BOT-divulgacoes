@@ -1,87 +1,125 @@
-import { PREFIX } from "../../config.js";
+import { connect } from "./connection.js";
+import { load } from "./loader.js";
+import { badMacHandler } from "./utils/badMacHandler.js";
+import { bannerLog, errorLog, infoLog, warningLog } from "./utils/logger.js";
+import { startGroupScheduler } from "./services/groupScheduler.js";
+import http from "node:http";
 
-export default {
-    name: "autoresponder",
-    description: "Respostas automáticas",
-    commands: ["autoresponder", "ar"],
-    usage: `${PREFIX}autoresponder add|palavra|resposta`,
+global.autoReplies = global.autoReplies || {};
 
-    handle: async ({ sendReply, fullArgs, from, isGroup }) => {
-        if (isGroup) {
-            return sendReply("⚠️ Só funciona no privado!");
-        }
-
-        const args = fullArgs.trim();
-        
-        if (!args) {
-            return sendReply(`🤖 *Auto Responder*\n\nComandos:\n${PREFIX}autoresponder add|palavra|resposta\n${PREFIX}autoresponder list\n${PREFIX}autoresponder remove|palavra`);
-        }
-
-        if (args.startsWith("add")) {
-            // Remove "add" do início
-            let rest = args.substring(3).trim();
-            
-            // Se começar com |, remove também
-            if (rest.startsWith("|")) rest = rest.substring(1).trim();
-            
-            const pipeIndex = rest.indexOf("|");
-            if (pipeIndex === -1) {
-                return sendReply(`❌ Use: ${PREFIX}autoresponder add|palavra|resposta\nEx: ${PREFIX}autoresponder add|oi|Olá!`);
-            }
-            
-            const palavra = rest.substring(0, pipeIndex).trim().toLowerCase();
-            const resposta = rest.substring(pipeIndex + 1).trim();
-            
-            if (!palavra || !resposta) {
-                return sendReply("❌ Palavra e resposta são obrigatórias!");
-            }
-            
-            const autoReplies = global.autoReplies || {};
-            autoReplies[palavra] = resposta;
-            global.autoReplies = autoReplies;
-            
-            await sendReply(`✅ *${palavra}* → ${resposta}`);
-            return;
-        }
-
-        if (args.startsWith("remove")) {
-            let palavra = args.substring(6).trim().toLowerCase();
-            if (palavra.startsWith("|")) palavra = palavra.substring(1).trim();
-            
-            if (!palavra) {
-                return sendReply(`❌ Use: ${PREFIX}autoresponder remove|palavra`);
-            }
-            
-            const autoReplies = global.autoReplies || {};
-            
-            if (!autoReplies[palavra]) {
-                return sendReply(`❌ "${palavra}" não encontrado!`);
-            }
-            
-            delete autoReplies[palavra];
-            global.autoReplies = autoReplies;
-            
-            await sendReply(`✅ Removido: *${palavra}*`);
-            return;
-        }
-
-        if (args === "list" || args === "lista") {
-            const autoReplies = global.autoReplies || {};
-            const keys = Object.keys(autoReplies);
-            
-            if (keys.length === 0) {
-                return sendReply("📭 Nenhuma resposta cadastrada.\n\nUse: `?autoresponder add|oi|Olá!`");
-            }
-            
-            let msg = "📋 *RESPOSTAS AUTOMÁTICAS*\n\n";
-            keys.forEach((p, i) => {
-                const r = autoReplies[p];
-                msg += `${i+1}. *"${p}"* → ${r}\n`;
-            });
-            await sendReply(msg);
-            return;
-        }
-
-        await sendReply(`❌ Comando inválido!\nUse: ${PREFIX}autoresponder add|oi|Olá`);
+process.on("uncaughtException", (error) => {
+    if (badMacHandler.handleError(error, "uncaughtException")) {
+        return;
     }
-};
+    errorLog(`Erro crítico não capturado: ${error.message}`);
+    errorLog(error.stack);
+    if (!error.message.includes("ENOTFOUND") && !error.message.includes("timeout")) {
+        process.exit(1);
+    }
+});
+
+process.on("unhandledRejection", (reason) => {
+    if (badMacHandler.handleError(reason, "unhandledRejection")) {
+        return;
+    }
+    errorLog(`Promessa rejeitada não tratada:`, reason);
+});
+
+async function startBot() {
+    try {
+        process.setMaxListeners(1500);
+        bannerLog();
+        infoLog("Iniciando meus componentes internos...");
+        
+        const socket = await connect();
+        
+        // ============================================
+        // SISTEMA DE AUTO-RESPOSTAS (SOMENTE PRIVADO)
+        // ============================================
+        infoLog("📝 Ativando sistema de auto-respostas...");
+        
+        socket.ev.on("messages.upsert", async ({ messages }) => {
+            try {
+                const msg = messages[0];
+                if (!msg || !msg.message) return;
+                if (msg.key.remoteJid?.includes("@status")) return;
+                
+                const isGroup = msg.key.remoteJid?.includes("@g.us");
+                const from = msg.key.remoteJid;
+                
+                const messageText = msg.message.conversation || 
+                                   msg.message.extendedTextMessage?.text || 
+                                   msg.message.imageMessage?.caption ||
+                                   msg.message.videoMessage?.caption;
+                
+                if (!messageText) return;
+                if (messageText.startsWith("?")) return;
+                
+                // SÓ RESPONDE NO PRIVADO!
+                if (!isGroup) {
+                    const autoReplies = global.autoReplies || {};
+                    const lowerText = messageText.toLowerCase();
+                    
+                    for (const [palavra, resposta] of Object.entries(autoReplies)) {
+                        if (lowerText.includes(palavra.toLowerCase())) {
+                            await socket.sendMessage(from, { text: resposta });
+                            infoLog(`🤖 Auto-resposta: "${palavra}" -> ${from}`);
+                            break;
+                        }
+                    }
+                }
+            } catch (err) {
+                errorLog(`Erro no auto-resposta: ${err.message}`);
+            }
+        });
+        
+        infoLog("✅ Sistema de auto-respostas ativo!");
+        
+        load(socket);
+        startGroupScheduler(socket);
+        
+        setInterval(() => {
+            const currentStats = badMacHandler.getStats();
+            if (currentStats.errorCount > 0) {
+                warningLog(`BadMacHandler stats: ${currentStats.errorCount}/${currentStats.maxRetries} erros`);
+            }
+        }, 300_000);
+        
+    } catch (error) {
+        if (badMacHandler.handleError(error, "bot-startup")) {
+            warningLog("Erro Bad MAC durante inicialização, tentando novamente...");
+            setTimeout(() => { startBot(); }, 5000);
+            return;
+        }
+        errorLog(`Erro ao iniciar o bot: ${error.message}`);
+        errorLog(error.stack);
+        process.exit(1);
+    }
+}
+
+startBot();
+
+const PORT = process.env.PORT || 10000;
+http.createServer((req, res) => {
+    res.writeHead(200, { "Content-Type": "text/plain" });
+    res.end("Raky BOT online!");
+}).listen(PORT, () => {
+    console.log(`[RENDER] Servidor HTTP rodando na porta ${PORT}`);
+});
+
+// ============================================
+// AUTO-PING para manter ativo no Render
+// ============================================
+const AUTOPING_URL = process.env.RENDER_EXTERNAL_URL || "https://raky-bot-divulgacoes.onrender.com";
+
+async function autoPing() {
+    try {
+        const response = await fetch(AUTOPING_URL);
+        console.log(`[AUTO-PING] ✅ Bot ativo - Status: ${response.status}`);
+    } catch (error) {
+        console.log(`[AUTO-PING] ⚠️ Erro: ${error.message}`);
+    }
+}
+
+setInterval(autoPing, 5 * 60 * 1000);
+setTimeout(autoPing, 60 * 1000);
